@@ -1,19 +1,48 @@
-"""
-Compatibility wrapper so older code can still import:
+import joblib
+import numpy as np
+from pathlib import Path
 
-    from backend.models.ingame_predict import predict_home_win_prob
-
-We now delegate to the new winprob_model implementation.
-"""
-
-from typing import Any, Dict
-
-from backend.models.winprob_model.predict import predict_home_win_prob as _predict
+ARTIFACTS = None
+ARTIFACTS_PATH = Path(__file__).resolve().parent / "model.pkl"
 
 
-def predict_home_win_prob(state: Dict[str, Any]) -> float:
+def _load_artifacts():
+    global ARTIFACTS
+    if ARTIFACTS is None:
+        ARTIFACTS = joblib.load(ARTIFACTS_PATH)
+    return ARTIFACTS
+
+
+def predict_home_win_prob(state: dict) -> float:
     """
-    Forwarder to backend.models.winprob_model.predict.predict_home_win_prob
-    so existing imports keep working.
+    state = {
+        'quarter': int,
+        'seconds_remaining': int,
+        'score_diff_home': int,
+        'home_has_ball': int,
+        'yardline_100': int,
+        'down': int,
+        'ydstogo': int
+    }
     """
-    return _predict(state)
+
+    artifacts = _load_artifacts()
+
+    # extract objects
+    feature_cols = artifacts["feature_cols"]
+    base_model = artifacts["base_model"]
+    calibrator = artifacts["calibrator"]
+
+    # Build input row
+    X = np.array([[state[c] for c in feature_cols]], dtype=float)
+
+    # Predict raw probabilities from logistic regression
+    raw_proba = base_model.predict_proba(X)[0, 1]
+
+    # Apply calibrator if present
+    if calibrator is not None:
+        calibrated = calibrator.predict(np.array([raw_proba]))[0]
+        return float(calibrated)
+
+    # otherwise return raw
+    return float(raw_proba)
